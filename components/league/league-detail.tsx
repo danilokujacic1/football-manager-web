@@ -39,7 +39,9 @@ export function LeagueDetail({ league, leagueId }: { league: League; leagueId: s
         }}
       >
         {activeTab === "games" ? <LeagueGamesTab leagueId={leagueId} /> : null}
-        {activeTab === "league" ? <LeagueStandingsTab leagueId={leagueId} /> : null}
+        {activeTab === "league" ? (
+          <LeagueStandingsTab leagueId={leagueId} configuration={league.configuration} />
+        ) : null}
         {activeTab === "team" ? <MyTeamTab leagueId={leagueId} /> : null}
       </div>
 

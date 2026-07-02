@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Field, FormError } from "@/components/auth/auth-ui"
 import { PhoneFrame } from "@/components/gaffer/phone-frame"
 import { createLeague, type NewLeaguePlayer, type PlayerPosition } from "@/lib/api/leagues"
@@ -19,27 +19,42 @@ interface Formation {
   FWD: number
 }
 
-/** Presets are written outfield-only (DEF-MID-FWD); a keeper is always implied. */
-const PRESETS: { key: string; def: number; mid: number; fwd: number }[] = [
-  { key: "2-1-1", def: 2, mid: 1, fwd: 1 },
-  { key: "1-2-1", def: 1, mid: 2, fwd: 1 },
-  { key: "2-2-1", def: 2, mid: 2, fwd: 1 },
-  { key: "3-2-1", def: 3, mid: 2, fwd: 1 },
-  { key: "4-4-2", def: 4, mid: 4, fwd: 2 },
-  { key: "4-3-3", def: 4, mid: 3, fwd: 3 },
-  { key: "3-5-2", def: 3, mid: 5, fwd: 2 },
+/**
+ * Presets are written outfield-only (DEF-MID-FWD); a keeper is always implied.
+ * The list covers every starting-XI size from 4 to 11 so a shape can always be
+ * matched to the squad size chosen in step 2.
+ */
+type Preset = { key: string; def: number; mid: number; fwd: number }
+const PRESETS: Preset[] = [
+  { key: "1-1-1", def: 1, mid: 1, fwd: 1 }, // 4 starters
+  { key: "2-1-1", def: 2, mid: 1, fwd: 1 }, // 5
+  { key: "1-2-1", def: 1, mid: 2, fwd: 1 }, // 5
+  { key: "2-2-1", def: 2, mid: 2, fwd: 1 }, // 6
+  { key: "2-1-2", def: 2, mid: 1, fwd: 2 }, // 6
+  { key: "3-2-1", def: 3, mid: 2, fwd: 1 }, // 7
+  { key: "2-2-2", def: 2, mid: 2, fwd: 2 }, // 7
+  { key: "3-3-1", def: 3, mid: 3, fwd: 1 }, // 8
+  { key: "3-2-2", def: 3, mid: 2, fwd: 2 }, // 8
+  { key: "3-3-2", def: 3, mid: 3, fwd: 2 }, // 9
+  { key: "4-3-1", def: 4, mid: 3, fwd: 1 }, // 9
+  { key: "4-3-2", def: 4, mid: 3, fwd: 2 }, // 10
+  { key: "4-4-1", def: 4, mid: 4, fwd: 1 }, // 10
+  { key: "4-4-2", def: 4, mid: 4, fwd: 2 }, // 11
+  { key: "4-3-3", def: 4, mid: 3, fwd: 3 }, // 11
+  { key: "3-5-2", def: 3, mid: 5, fwd: 2 }, // 11
 ]
+
+/** Size of the starting XI a preset describes (outfield players + the implied GK). */
+const startersOf = (p: Preset) => 1 + p.def + p.mid + p.fwd
 
 /** A single editable row of the players field array. Strings, parsed on submit. */
 interface PlayerRow {
   name: string
   position: PlayerPosition
   value: string
-  club: string
 }
 
-const emptyPlayer = (): PlayerRow => ({ name: "", position: "GK", value: "", club: "" })
-const sumFormation = (f: Formation) => f.GK + f.DEF + f.MID + f.FWD
+const emptyPlayer = (): PlayerRow => ({ name: "", position: "GK", value: "" })
 
 export default function NewLeaguePage() {
   const router = useRouter()
@@ -51,32 +66,44 @@ export default function NewLeaguePage() {
   // Step 1 — name
   const [name, setName] = useState("")
 
-  // Step 2 — configuration (squad size now comes from the formation, not here)
-  const [benchPlayers, setBenchPlayers] = useState("4")
+  // Step 2 — configuration (squad size lives here; the formation only sets the shape)
+  const [totalPlayers, setTotalPlayers] = useState("11")
+  const [benchPlayers, setBenchPlayers] = useState("3")
   const [unlimitedBudget, setUnlimitedBudget] = useState(false)
   const [budget, setBudget] = useState("100")
   const [transfersPerRound, setTransfersPerRound] = useState("1")
 
-  // Step 3 — formation
+  // Step 3 — formation (shape only; the starter count comes from step 2)
   const [formationMode, setFormationMode] = useState<"preset" | "free">("preset")
   const [presetKey, setPresetKey] = useState(PRESETS[0].key)
-  const [freeSquadSize, setFreeSquadSize] = useState("5")
 
   // Step 4 — players field array
   const [players, setPlayers] = useState<PlayerRow[]>([emptyPlayer()])
 
-  // ---- derived formation requirements ----
-  const preset = PRESETS.find((p) => p.key === presetKey) ?? PRESETS[0]
-  const freeSize = Number(freeSquadSize)
+  // ---- derived squad figures (size comes from step 2, shape from step 3) ----
+  const totalNum = Number(totalPlayers)
+  const benchNum = Number(benchPlayers)
+  const validSizes = Number.isInteger(totalNum) && Number.isInteger(benchNum)
+  const starters = validSizes ? totalNum - benchNum : 0
+
+  // Presets whose starting XI (GK + outfield) matches the required starter count.
+  const availablePresets = PRESETS.filter((p) => startersOf(p) === starters)
+  const preset = availablePresets.find((p) => p.key === presetKey) ?? availablePresets[0] ?? null
+
   // Minimum players the pool must hold per position so a valid XI can be fielded.
   const required: Formation =
-    formationMode === "preset"
+    formationMode === "preset" && preset
       ? { GK: 1, DEF: preset.def, MID: preset.mid, FWD: preset.fwd }
       : { GK: 1, DEF: 1, MID: 1, FWD: 1 }
-  const starters =
-    formationMode === "preset" ? sumFormation(required) : Number.isInteger(freeSize) ? freeSize : 0
-  const benchNum = Number(benchPlayers)
-  const minSquad = starters + (Number.isInteger(benchNum) ? benchNum : 0)
+  const minSquad = validSizes ? starters + benchNum : 0
+
+  // Keep the selected preset valid whenever the starter count changes.
+  useEffect(() => {
+    if (availablePresets.length > 0 && !availablePresets.some((p) => p.key === presetKey)) {
+      setPresetKey(availablePresets[0].key)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [starters])
 
   // ---- derived budget / pool figures ----
   const budgetTotal = unlimitedBudget ? null : Number(budget)
@@ -103,12 +130,15 @@ export default function NewLeaguePage() {
           benchPlayers: Number(benchPlayers),
           budget: unlimitedBudget ? null : Number(budget),
           transfersPerRound: Number(transfersPerRound),
+          // Persist the chosen starting formation. Preset mode's `required` sums
+          // to `starters` (= maxPlayers), which the backend requires. Free mode has
+          // no fixed shape, so it's omitted and the backend keeps its defaults.
+          ...(formationMode === "preset" && preset ? { positionCounts: required } : {}),
         },
         players: named.map<NewLeaguePlayer>((p) => ({
           name: p.name.trim(),
           position: p.position,
           ...(p.value.trim() ? { value: Number(p.value) } : {}),
-          ...(p.club.trim() ? { club: p.club.trim() } : {}),
         })),
       }),
     onSuccess: (league) => {
@@ -133,7 +163,10 @@ export default function NewLeaguePage() {
     }
 
     if (current === 1) {
-      if (!inRange(benchPlayers, 0, 15)) return "Bench size must be a whole number between 0 and 15."
+      if (!inRange(totalPlayers, 4, 11)) return "Total squad size must be a whole number between 4 and 11."
+      if (!inRange(benchPlayers, 0, 3)) return "Bench size must be a whole number between 0 and 3."
+      if (starters < 4)
+        return "Leave room for at least 4 starters (total players minus bench must be 4 or more)."
       if (!unlimitedBudget && !inRange(budget, 0, Number.MAX_SAFE_INTEGER))
         return "Budget must be a whole number of 0 or more (or set it to unlimited)."
       if (!inRange(transfersPerRound, 0, 50)) return "Transfers per round must be between 0 and 50."
@@ -141,8 +174,8 @@ export default function NewLeaguePage() {
     }
 
     if (current === 2) {
-      if (formationMode === "free" && !inRange(freeSquadSize, 4, 30))
-        return "A free squad needs between 4 and 30 starters (at least one per position)."
+      if (formationMode === "preset" && !preset)
+        return "No preset fits this squad size. Switch to a free formation or adjust the squad size."
       return null
     }
 
@@ -150,6 +183,9 @@ export default function NewLeaguePage() {
       if (named.length === 0) return "Add at least one player (a name is required)."
       if (named.some((p) => p.name.trim().length > 80)) return "Player names must be 80 characters or fewer."
       if (named.some((p) => p.value.trim() && !(Number(p.value) >= 0))) return "Player values must be 0 or more."
+      // With a budget in play, every player needs a value to draft against it.
+      if (budgetTotal != null && named.some((p) => !p.value.trim() || !(Number(p.value) >= 0)))
+        return "Every player needs a value when the league has a budget."
 
       // Each position needs at least the formation's requirement, or no manager can field a valid XI.
       const short = POSITIONS.filter((pos) => counts[pos] < required[pos])
@@ -193,6 +229,23 @@ export default function NewLeaguePage() {
   const removePlayer = (index: number) =>
     setPlayers((rows) => (rows.length === 1 ? rows : rows.filter((_, i) => i !== index)))
 
+  /**
+   * Spread the whole budget evenly across every player row. Any indivisible
+   * remainder is handed out a unit at a time so the values sum to exactly the
+   * budget (no rounding drift). Only meaningful when a finite budget is set.
+   */
+  const autofillValues = () =>
+    setPlayers((rows) => {
+      if (budgetTotal == null || rows.length === 0) return rows
+      const base = Math.floor(budgetTotal / rows.length)
+      let remainder = budgetTotal - base * rows.length
+      return rows.map((row) => {
+        const extra = remainder > 0 ? 1 : 0
+        remainder -= extra
+        return { ...row, value: String(base + extra) }
+      })
+    })
+
   const isLast = step === STEPS.length - 1
   const submitting = mutation.isPending
 
@@ -212,8 +265,8 @@ export default function NewLeaguePage() {
             </h1>
             <p style={{ fontSize: 14, lineHeight: 1.5, color: "#9BA6BC", margin: "8px 0 0", maxWidth: 300 }}>
               {step === 0 && "This is what your mates will see when they join."}
-              {step === 1 && "Set the budget, bench and transfer rules. You can change these later."}
-              {step === 2 && "This sets the squad shape and how many of each position the pool must cover."}
+              {step === 1 && "Set the squad size, bench, budget and transfer rules. You can change these later."}
+              {step === 2 && "Pick the starting shape. Only formations that fit your squad size are shown."}
               {step === 3 && "Build the player pool managers will draft from."}
             </p>
           </div>
@@ -234,10 +287,12 @@ export default function NewLeaguePage() {
 
             {step === 1 && (
               <ConfigStep
+                totalPlayers={totalPlayers}
                 benchPlayers={benchPlayers}
                 budget={budget}
                 unlimitedBudget={unlimitedBudget}
                 transfersPerRound={transfersPerRound}
+                onTotalPlayers={setTotalPlayers}
                 onBenchPlayers={setBenchPlayers}
                 onBudget={setBudget}
                 onUnlimitedBudget={setUnlimitedBudget}
@@ -249,12 +304,11 @@ export default function NewLeaguePage() {
               <FormationStep
                 mode={formationMode}
                 presetKey={presetKey}
-                freeSquadSize={freeSquadSize}
+                availablePresets={availablePresets}
                 required={required}
                 starters={starters}
                 onMode={setFormationMode}
                 onPreset={setPresetKey}
-                onFreeSquadSize={setFreeSquadSize}
               />
             )}
 
@@ -264,6 +318,7 @@ export default function NewLeaguePage() {
                 onUpdate={updatePlayer}
                 onRemove={removePlayer}
                 onAdd={addPlayer}
+                onAutofill={autofillValues}
                 budgetTotal={budgetTotal}
                 spent={spent}
                 remaining={remaining}
@@ -350,27 +405,41 @@ function Stepper({ current }: { current: number }) {
 /* ----------------------------------------------------------------- step two */
 
 function ConfigStep({
+  totalPlayers,
   benchPlayers,
   budget,
   unlimitedBudget,
   transfersPerRound,
+  onTotalPlayers,
   onBenchPlayers,
   onBudget,
   onUnlimitedBudget,
   onTransfersPerRound,
 }: {
+  totalPlayers: string
   benchPlayers: string
   budget: string
   unlimitedBudget: boolean
   transfersPerRound: string
+  onTotalPlayers: (v: string) => void
   onBenchPlayers: (v: string) => void
   onBudget: (v: string) => void
   onUnlimitedBudget: (v: boolean) => void
   onTransfersPerRound: (v: string) => void
 }) {
+  const total = Number(totalPlayers)
+  const bench = Number(benchPlayers)
+  const starters = Number.isInteger(total) && Number.isInteger(bench) ? total - bench : null
+
   return (
     <div>
-      <NumberField id="bench-players" label="BENCH SIZE" value={benchPlayers} onChange={onBenchPlayers} />
+      <NumberField id="total-players" label="TOTAL SQUAD SIZE (MAX 11)" value={totalPlayers} onChange={onTotalPlayers} />
+      <NumberField id="bench-players" label="BENCH SIZE (MAX 3)" value={benchPlayers} onChange={onBenchPlayers} />
+      <p style={{ fontSize: 13, color: "#9BA6BC", margin: "-4px 0 14px", fontFamily: "var(--font-space-grotesk)" }}>
+        {starters != null && starters >= 1
+          ? `${starters} starter${starters === 1 ? "" : "s"} + ${bench} bench = ${total} players per team.`
+          : "Total minus bench sets how many starters each team fields."}
+      </p>
 
       <NumberField
         id="budget"
@@ -394,22 +463,22 @@ function ConfigStep({
 function FormationStep({
   mode,
   presetKey,
-  freeSquadSize,
+  availablePresets,
   required,
   starters,
   onMode,
   onPreset,
-  onFreeSquadSize,
 }: {
   mode: "preset" | "free"
   presetKey: string
-  freeSquadSize: string
+  availablePresets: Preset[]
   required: Formation
   starters: number
   onMode: (m: "preset" | "free") => void
   onPreset: (key: string) => void
-  onFreeSquadSize: (v: string) => void
 }) {
+  const hasPresets = availablePresets.length > 0
+
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
@@ -420,44 +489,48 @@ function FormationStep({
       <Pitch formation={mode === "preset" ? required : { GK: 1, DEF: 1, MID: 1, FWD: 1 }} free={mode === "free"} />
 
       {mode === "preset" ? (
-        <>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 18 }}>
-            {PRESETS.map((p) => {
-              const active = p.key === presetKey
-              return (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => onPreset(p.key)}
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    cursor: "pointer",
-                    fontFamily: "var(--font-archivo)",
-                    fontWeight: 800,
-                    fontSize: 14,
-                    border: `1.5px solid ${active ? "rgba(0,229,199,.55)" : "rgba(255,255,255,.12)"}`,
-                    background: active ? "rgba(0,229,199,.14)" : "rgba(255,255,255,.05)",
-                    color: active ? "#00E5C7" : "#9BA6BC",
-                  }}
-                >
-                  {p.key}
-                </button>
-              )
-            })}
-          </div>
-          <p style={{ fontSize: 13, color: "#9BA6BC", margin: "14px 0 0", fontFamily: "var(--font-space-grotesk)" }}>
-            {starters} starters: 1 GK · {required.DEF} DEF · {required.MID} MID · {required.FWD} FWD. The pool must cover
-            at least this many of each position.
+        hasPresets ? (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 18 }}>
+              {availablePresets.map((p) => {
+                const active = p.key === presetKey
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => onPreset(p.key)}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 12,
+                      cursor: "pointer",
+                      fontFamily: "var(--font-archivo)",
+                      fontWeight: 800,
+                      fontSize: 14,
+                      border: `1.5px solid ${active ? "rgba(0,229,199,.55)" : "rgba(255,255,255,.12)"}`,
+                      background: active ? "rgba(0,229,199,.14)" : "rgba(255,255,255,.05)",
+                      color: active ? "#00E5C7" : "#9BA6BC",
+                    }}
+                  >
+                    {p.key}
+                  </button>
+                )
+              })}
+            </div>
+            <p style={{ fontSize: 13, color: "#9BA6BC", margin: "14px 0 0", fontFamily: "var(--font-space-grotesk)" }}>
+              {starters} starters: 1 GK · {required.DEF} DEF · {required.MID} MID · {required.FWD} FWD. The pool must
+              cover at least this many of each position.
+            </p>
+          </>
+        ) : (
+          <p style={{ fontSize: 13, color: "#FFB454", margin: "18px 0 0", fontFamily: "var(--font-space-grotesk)" }}>
+            No preset fits a {starters}-player starting XI. Switch to a free formation, or go back and adjust the squad
+            size.
           </p>
-        </>
+        )
       ) : (
-        <div style={{ marginTop: 18 }}>
-          <NumberField id="free-squad-size" label="STARTERS PER TEAM" value={freeSquadSize} onChange={onFreeSquadSize} />
-          <p style={{ fontSize: 13, color: "#9BA6BC", margin: "4px 0 0", fontFamily: "var(--font-space-grotesk)" }}>
-            Managers can field any shape. The pool just needs at least one player in every position (GK, DEF, MID, FWD).
-          </p>
-        </div>
+        <p style={{ fontSize: 13, color: "#9BA6BC", margin: "18px 0 0", fontFamily: "var(--font-space-grotesk)" }}>
+          {starters} starters, any shape. The pool just needs at least one player in every position (GK, DEF, MID, FWD).
+        </p>
       )}
     </div>
   )
@@ -522,6 +595,27 @@ function Pitch({ formation, free }: { formation: Formation; free?: boolean }) {
           border: "2px solid rgba(255,255,255,.18)",
         }}
       />
+      {/* goal — sits behind the GK at the bottom of the pitch */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          bottom: 6,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: 96,
+          height: 26,
+          borderTop: "3px solid rgba(255,255,255,.85)",
+          borderLeft: "3px solid rgba(255,255,255,.85)",
+          borderRight: "3px solid rgba(255,255,255,.85)",
+          borderTopLeftRadius: 4,
+          borderTopRightRadius: 4,
+          backgroundImage:
+            "repeating-linear-gradient(90deg, rgba(255,255,255,.22) 0 1px, transparent 1px 9px)," +
+            "repeating-linear-gradient(0deg, rgba(255,255,255,.22) 0 1px, transparent 1px 9px)",
+          zIndex: 0,
+        }}
+      />
       {lines.map((line) => (
         <div key={line.pos} style={{ display: "flex", justifyContent: "center", gap: 10, position: "relative", zIndex: 1, flex: 1, alignItems: "center" }}>
           {Array.from({ length: Math.max(1, line.count) }).map((_, i) => (
@@ -558,6 +652,7 @@ function PlayersStep({
   onUpdate,
   onRemove,
   onAdd,
+  onAutofill,
   budgetTotal,
   spent,
   remaining,
@@ -570,6 +665,7 @@ function PlayersStep({
   onUpdate: (index: number, patch: Partial<PlayerRow>) => void
   onRemove: (index: number) => void
   onAdd: () => void
+  onAutofill: () => void
   budgetTotal: number | null
   spent: number
   remaining: number | null
@@ -578,6 +674,16 @@ function PlayersStep({
   minSquad: number
   namedCount: number
 }) {
+  // Indices of cards the user has collapsed; new cards start expanded.
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+  const toggleCollapsed = (index: number) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <PoolSummary
@@ -590,64 +696,156 @@ function PlayersStep({
         namedCount={namedCount}
       />
 
-      {players.map((player, i) => (
-        <div
-          key={i}
+      {budgetTotal != null && budgetTotal > 0 ? (
+        <button
+          type="button"
+          onClick={onAutofill}
           style={{
-            borderRadius: 16,
-            border: "1px solid rgba(255,255,255,.1)",
-            background: "rgba(255,255,255,.04)",
-            padding: 16,
+            height: 46,
+            borderRadius: 14,
+            border: "1.5px solid rgba(0,229,199,.4)",
+            background: "rgba(0,229,199,.1)",
+            color: "#00E5C7",
+            cursor: "pointer",
+            fontFamily: "var(--font-archivo)",
+            fontWeight: 800,
+            fontSize: 13,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", color: "#7C879B" }}>PLAYER {i + 1}</span>
-            {players.length > 1 ? (
+          Autofill values to spend the {budgetTotal} budget
+        </button>
+      ) : null}
+
+      {players.map((player, i) => {
+        const isCollapsed = collapsed.has(i)
+        return (
+          <div
+            key={i}
+            style={{
+              borderRadius: 16,
+              border: "1px solid rgba(255,255,255,.1)",
+              background: "rgba(255,255,255,.04)",
+              padding: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: isCollapsed ? 0 : 6 }}>
               <button
                 type="button"
-                onClick={() => onRemove(i)}
-                style={{ background: "none", border: 0, cursor: "pointer", color: "#FF6B6B", fontSize: 12, fontWeight: 600, padding: 4 }}
+                onClick={() => toggleCollapsed(i)}
+                aria-expanded={!isCollapsed}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "none",
+                  border: 0,
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: ".1em",
+                  color: "#7C879B",
+                }}
               >
-                Remove
+                <span aria-hidden style={{ fontSize: 12, transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform .15s" }}>
+                  ▾
+                </span>
+                PLAYER {i + 1}
               </button>
-            ) : null}
-          </div>
-
-          <Field
-            id={`player-name-${i}`}
-            label="NAME"
-            value={player.name}
-            onChange={(v) => onUpdate(i, { name: v })}
-            placeholder="e.g. Alex Morgan"
-            autoComplete="off"
-          />
-
-          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".1em", color: "#7C879B" }}>POSITION</span>
-          <PositionPicker value={player.position} onChange={(pos) => onUpdate(i, { position: pos })} />
-
-          <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
-            <div style={{ flex: 1 }}>
-              <NumberField
-                id={`player-value-${i}`}
-                label="VALUE (OPTIONAL)"
-                value={player.value}
-                onChange={(v) => onUpdate(i, { value: v })}
-                placeholder="0"
-              />
+              {players.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => onRemove(i)}
+                  style={{ background: "none", border: 0, cursor: "pointer", color: "#FF6B6B", fontSize: 12, fontWeight: 600, padding: 4 }}
+                >
+                  Remove
+                </button>
+              ) : null}
             </div>
-            <div style={{ flex: 1 }}>
-              <Field
-                id={`player-club-${i}`}
-                label="CLUB (OPTIONAL)"
-                value={player.club}
-                onChange={(v) => onUpdate(i, { club: v })}
-                placeholder="e.g. Rovers"
-                autoComplete="off"
-              />
-            </div>
+
+            {isCollapsed ? (
+              <button
+                type="button"
+                onClick={() => toggleCollapsed(i)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  width: "100%",
+                  marginTop: 10,
+                  background: "none",
+                  border: 0,
+                  cursor: "pointer",
+                  padding: 0,
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  style={{
+                    flex: "none",
+                    minWidth: 40,
+                    textAlign: "center",
+                    borderRadius: 8,
+                    padding: "4px 8px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    color: "#00E5C7",
+                    background: "rgba(0,229,199,.12)",
+                    border: "1px solid rgba(0,229,199,.35)",
+                    fontFamily: "var(--font-archivo)",
+                  }}
+                >
+                  {player.position}
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    color: player.name.trim() ? "#F2F5FF" : "#7C879B",
+                    fontFamily: "var(--font-space-grotesk)",
+                    fontWeight: 600,
+                    fontSize: 14,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {player.name.trim() || "Unnamed player"}
+                </span>
+                {player.value.trim() ? (
+                  <span style={{ flex: "none", fontFamily: "var(--font-archivo)", fontWeight: 800, fontSize: 14, color: "#00E5C7" }}>
+                    {player.value}
+                  </span>
+                ) : null}
+              </button>
+            ) : (
+              <>
+                <Field
+                  id={`player-name-${i}`}
+                  label="NAME"
+                  value={player.name}
+                  onChange={(v) => onUpdate(i, { name: v })}
+                  placeholder="e.g. Alex Morgan"
+                  autoComplete="off"
+                />
+
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".1em", color: "#7C879B" }}>POSITION</span>
+                <PositionPicker value={player.position} onChange={(pos) => onUpdate(i, { position: pos })} />
+
+                <div style={{ marginTop: 14 }}>
+                  <NumberField
+                    id={`player-value-${i}`}
+                    label={budgetTotal != null ? "VALUE" : "VALUE (OPTIONAL)"}
+                    value={player.value}
+                    onChange={(v) => onUpdate(i, { value: v })}
+                    placeholder="0"
+                  />
+                </div>
+              </>
+            )}
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       <button
         type="button"

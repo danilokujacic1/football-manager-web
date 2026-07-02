@@ -7,10 +7,12 @@ import { BackButton, SectionLabel } from "@/components/gaffer/ui"
 import { fetchMe } from "@/lib/api/auth"
 import { fetchLeagueTeams, fetchTeam, type Player, type PlayerPosition, type TeamPlayer } from "@/lib/api/teams"
 import { colorFromString } from "@/lib/visual"
+import { PitchField } from "./pitch-field"
 import { TeamPlayerCard } from "./team-player-card"
 import { PlayerDetailView } from "./player-detail-view"
 
-const POS_ORDER: PlayerPosition[] = ["GK", "DEF", "MID", "FWD"]
+// FWD at top → GK at bottom, consistent with the goal at the GK end.
+const POS_ORDER: PlayerPosition[] = ["FWD", "MID", "DEF", "GK"]
 const POS_LABEL: Record<PlayerPosition, string> = {
   GK: "Goalkeeper",
   DEF: "Defenders",
@@ -215,38 +217,28 @@ export function TeamView({
 
       {pitchView ? (
         <>
-          {/* pitch */}
-          <div
-            style={{
-              margin: "8px 14px 0",
-              borderRadius: 18,
-              overflow: "hidden",
-              position: "relative",
-              background: "linear-gradient(175deg,#0E7A4A 0%,#0A6B40 50%,#085C37 100%)",
-              padding: "14px 8px 12px",
-            }}
+          {/* Pitch — FWD at top, GK (goal) at bottom. Uses shared PitchField chrome. */}
+          <PitchField
+            style={{ margin: "8px 14px 0", padding: "14px 8px 12px" }}
+            contentStyle={{ gap: 13 }}
           >
-            <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(0deg, rgba(255,255,255,.05) 0 44px, transparent 44px 88px)", pointerEvents: "none" }} />
-            <div aria-hidden style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", width: 90, height: 90, border: "1.5px solid rgba(255,255,255,.16)", borderRadius: "50%", borderTop: "none", pointerEvents: "none" }} />
-            <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 13 }}>
-              {POS_ORDER.map((pos) => {
-                const row = starters.filter((tp) => tp.player.position === pos)
-                if (row.length === 0) return null
-                return (
-                  <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 9 }}>
-                    {row.map((tp) => (
-                      <div key={tp.playerId} style={{ width: 74 }}>
-                        <TeamPlayerCard {...cardProps(tp)} />
-                      </div>
-                    ))}
-                  </div>
-                )
-              })}
-              {starters.length === 0 ? (
-                <p style={{ textAlign: "center", color: "rgba(255,255,255,.6)", fontSize: 13, padding: "20px 0" }}>No starters set.</p>
-              ) : null}
-            </div>
-          </div>
+            {POS_ORDER.map((pos) => {
+              const row = starters.filter((tp) => tp.player.position === pos)
+              if (row.length === 0) return null
+              return (
+                <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 9 }}>
+                  {row.map((tp) => (
+                    <div key={tp.playerId} style={{ width: 74 }}>
+                      <TeamPlayerCard {...cardProps(tp)} />
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+            {starters.length === 0 ? (
+              <p style={{ textAlign: "center", color: "rgba(255,255,255,.6)", fontSize: 13, padding: "20px 0" }}>No starters set.</p>
+            ) : null}
+          </PitchField>
 
           {/* bench row */}
           {bench.length > 0 ? (

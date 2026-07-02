@@ -4,10 +4,18 @@ import { useQuery } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import { Spinner } from "@/components/common/phone-screen"
 import { fetchMe } from "@/lib/api/auth"
+import type { LeagueConfigurationRecord } from "@/lib/api/leagues"
 import { fetchLeagueTeams, type Team } from "@/lib/api/teams"
 import { colorFromString } from "@/lib/visual"
+import { LeagueFormation } from "@/components/league/league-formation"
 
-export function LeagueStandingsTab({ leagueId }: { leagueId: string }) {
+export function LeagueStandingsTab({
+  leagueId,
+  configuration,
+}: {
+  leagueId: string
+  configuration: LeagueConfigurationRecord | null | undefined
+}) {
   const router = useRouter()
   const meQuery = useQuery({ queryKey: ["me"], queryFn: fetchMe, retry: false })
   const teamsQuery = useQuery({ queryKey: ["league-teams", leagueId], queryFn: () => fetchLeagueTeams(leagueId) })
@@ -22,6 +30,8 @@ export function LeagueStandingsTab({ leagueId }: { leagueId: string }) {
       <h1 style={{ fontFamily: "var(--font-archivo)", fontWeight: 800, fontSize: 28, color: "#fff", margin: "3px 0 16px" }}>
         League Table
       </h1>
+
+      <LeagueFormation configuration={configuration} />
 
       {teamsQuery.isPending ? (
         <div style={{ display: "flex", justifyContent: "center", padding: "90px 0" }}>

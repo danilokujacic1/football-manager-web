@@ -21,15 +21,54 @@ export interface LeagueMember {
   user: { id: string; email: string; displayName: string | null }
 }
 
-/** Configuration as stored/returned by the backend (budget serialized as string|null). */
+export type PlayerPosition = "GK" | "DEF" | "MID" | "FWD"
+
+/** Per-position player counts of the starting formation. Sums to `maxPlayers`. */
+export interface PositionCounts {
+  GK: number
+  DEF: number
+  MID: number
+  FWD: number
+}
+
+/**
+ * Configuration as stored/returned by the backend (budget serialized as string|null).
+ * The starting formation may arrive either as a nested `positionCounts` object or
+ * as flat `position{Gk,Def,Mid,Fwd}` columns — {@link resolvePositionCounts}
+ * normalizes both.
+ */
 export interface LeagueConfigurationRecord {
   maxPlayers: number
   benchPlayers: number
   budget: string | null
   transfersPerRound: number
+  positionCounts?: PositionCounts | null
+  positionGk?: number
+  positionDef?: number
+  positionMid?: number
+  positionFwd?: number
 }
 
-export type PlayerPosition = "GK" | "DEF" | "MID" | "FWD"
+/**
+ * Normalizes the formation from a configuration record into a {@link PositionCounts},
+ * accepting either the nested `positionCounts` object or the flat column layout.
+ * Returns `null` when no formation data is present.
+ */
+export function resolvePositionCounts(config: LeagueConfigurationRecord): PositionCounts | null {
+  const nested = config.positionCounts
+  if (nested && typeof nested.GK === "number") {
+    return { GK: nested.GK, DEF: nested.DEF, MID: nested.MID, FWD: nested.FWD }
+  }
+  if (typeof config.positionGk === "number") {
+    return {
+      GK: config.positionGk,
+      DEF: config.positionDef ?? 0,
+      MID: config.positionMid ?? 0,
+      FWD: config.positionFwd ?? 0,
+    }
+  }
+  return null
+}
 
 /** League-wide rules. Mirrors the backend Configuration model. */
 export interface LeagueConfiguration {
@@ -38,6 +77,8 @@ export interface LeagueConfiguration {
   /** `null` means an unlimited / infinite budget. */
   budget: number | null
   transfersPerRound: number
+  /** Starting formation. When sent, its values must sum to `maxPlayers`. */
+  positionCounts?: PositionCounts
 }
 
 /** One entry of the players field array on the create-league form. */
